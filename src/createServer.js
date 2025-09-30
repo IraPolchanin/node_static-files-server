@@ -1,22 +1,8 @@
 'use strict';
 
+const fsp = require('fs/promises');
 const http = require('http');
-const fs = require('fs/promises');
-const path = require('path');
-
-const mimeTypes = {
-  '.html': 'text/html; charset=utf-8',
-  '.css': 'text/css; charset=utf-8',
-  '.js': 'application/javascript; charset=utf-8',
-  '.json': 'application/json; charset=utf-8',
-  '.txt': 'text/plain; charset=utf-8',
-  '.png': 'image/png',
-  '.jpg': 'image/jpeg',
-  '.jpeg': 'image/jpeg',
-  '.gif': 'image/gif',
-  '.svg': 'image/svg+xml',
-  '.ico': 'image/x-icon',
-};
+const url = require('url');
 
 function sendError(res, status, message) {
   res.statusCode = status;
@@ -26,69 +12,38 @@ function sendError(res, status, message) {
 
 function createServer() {
   const server = http.createServer(async (req, res) => {
-    if (req.url.includes('/..')) {
-      return sendError(res, 400, 'Bad Request');
+    const normalizedURL = new url.URL(req.url, `http://${req.headers.host}`);
+    const normalizedPath =
+      normalizedURL.pathname.replace(/^\/file\//, '') || 'index.html';
+
+    // Check for invalid paths first
+    if (!normalizedURL.pathname.startsWith('/file')) {
+      return sendError(res, 400, 'Invalid file path');
     }
 
-    const pathname = req.url.split('?')[0];
-
-    if (!pathname.startsWith('/file/')) {
-      if (pathname.match(/\.\w+$/)) {
-        return sendError(res, 400, 'Bad Request');
-      }
-
-      return sendError(res, 200, 'Use /file/yourfile.ext to load static files');
+    // Check for path traversal attempts
+    if (normalizedURL.pathname.includes('..')) {
+      return sendError(res, 400, 'Invalid file path');
     }
 
-    if (pathname.includes('..')) {
-      return sendError(res, 400, 'Bad Request');
+    // Check for double slashes
+    if (normalizedPath.includes('//')) {
+      return sendError(res, 404, 'Paths have duplicated slashes');
     }
 
-    if (pathname.includes('//')) {
-      return sendError(res, 404, 'Not Found');
+    // Show hint for /file endpoint
+    if (!normalizedURL.pathname.startsWith('/file/')) {
+      return sendError(res, 200, 'Path should start with "/file/"');
     }
-
-    let filePath = pathname.slice(6);
-
-    if (filePath === '' || filePath === '/') {
-      filePath = 'index.html';
-    }
-
-    if (filePath.endsWith('/')) {
-      filePath += 'index.html';
-    }
-
-    let decodedPath;
 
     try {
-      decodedPath = decodeURIComponent(filePath);
-    } catch {
-      return sendError(res, 400, 'Bad Request');
-    }
-
-    const publicDir = path.resolve(__dirname, '..', 'public');
-    const realPath = path.resolve(publicDir, decodedPath);
-    const relative = path.relative(publicDir, realPath);
-
-    if (relative.startsWith('..') || path.isAbsolute(relative)) {
-      return sendError(res, 400, 'Bad Request');
-    }
-
-    const ext = path.extname(realPath).toLowerCase();
-
-    res.setHeader('Content-Type', mimeTypes[ext] || 'application/octet-stream');
-
-    try {
-      const file = await fs.readFile(realPath);
+      const file = await fsp.readFile(`./public/${normalizedPath}`, 'utf-8');
 
       res.statusCode = 200;
+      res.setHeader('Content-Type', 'text/plain');
       res.end(file);
-    } catch (err) {
-      if (err.code === 'ENOENT') {
-        return sendError(res, 404, 'Not Found');
-      }
-
-      return sendError(res, 500, 'Internal Server Error');
+    } catch (error) {
+      return sendError(res, 404, 'Not Found');
     }
   });
 
