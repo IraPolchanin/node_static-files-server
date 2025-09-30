@@ -2,15 +2,20 @@
 
 const http = require('http');
 const fs = require('fs/promises');
-const url = require('url');
 const path = require('path');
 
 const mimeTypes = {
-  '.html': 'text/html',
-  '.css': 'text/css',
-  '.js': 'application/javascript',
-  '.json': 'application/json',
-  '.txt': 'text/plain',
+  '.html': 'text/html; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.js': 'application/javascript; charset=utf-8',
+  '.json': 'application/json; charset=utf-8',
+  '.txt': 'text/plain; charset=utf-8',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.svg': 'image/svg+xml',
+  '.ico': 'image/x-icon',
 };
 
 function sendError(res, status, message) {
@@ -21,38 +26,42 @@ function sendError(res, status, message) {
 
 function createServer() {
   const server = http.createServer(async (req, res) => {
-    if (req.url.includes('..')) {
+    if (req.url.includes('/..')) {
       return sendError(res, 400, 'Bad Request');
     }
 
-    const normalizedUrl = new url.URL(
-      req.url || '',
-      `http://${req.headers.host}`,
-    );
-    const pathname = normalizedUrl.pathname;
+    const pathname = req.url.split('?')[0];
 
     if (!pathname.startsWith('/file/')) {
-      if (pathname === '/file') {
-        return sendError(
-          res,
-          200,
-          'Use /file/yourfile.ext to load static files',
-        );
+      if (pathname.match(/\.\w+$/)) {
+        return sendError(res, 400, 'Bad Request');
       }
 
+      return sendError(res, 200, 'Use /file/yourfile.ext to load static files');
+    }
+
+    if (pathname.includes('..')) {
       return sendError(res, 400, 'Bad Request');
     }
 
-    const filePath = pathname.slice(6);
-
-    if (filePath.includes('//')) {
+    if (pathname.includes('//')) {
       return sendError(res, 404, 'Not Found');
+    }
+
+    let filePath = pathname.slice(6);
+
+    if (filePath === '' || filePath === '/') {
+      filePath = 'index.html';
+    }
+
+    if (filePath.endsWith('/')) {
+      filePath += 'index.html';
     }
 
     let decodedPath;
 
     try {
-      decodedPath = decodeURIComponent(filePath) || 'index.html';
+      decodedPath = decodeURIComponent(filePath);
     } catch {
       return sendError(res, 400, 'Bad Request');
     }
@@ -74,8 +83,12 @@ function createServer() {
 
       res.statusCode = 200;
       res.end(file);
-    } catch {
-      return sendError(res, 404, 'Not Found');
+    } catch (err) {
+      if (err.code === 'ENOENT') {
+        return sendError(res, 404, 'Not Found');
+      }
+
+      return sendError(res, 500, 'Internal Server Error');
     }
   });
 
